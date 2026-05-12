@@ -341,13 +341,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <!-- PARENT VIEW -->
   <div class="panel" id="panel-par">
     <div class="panel-body">
-      <div class="card" id="par-list-card">
-        <div class="card-title" id="par-list-title">📋 Attendance</div>
-        <div id="par-list"></div>
+      <div id="par-list-card">
+        <div class="card" id="par-att-card">
+          <div class="card-title" id="par-list-title">📋 Attendance</div>
+          <div id="par-list"></div>
+        </div>
+        <div class="card" id="par-perf-card" style="margin-top:0;">
+          <div class="card-title">🎓 Academic Performance</div>
+          <div id="par-perf-list"></div>
+        </div>
       </div>
       <div class="card hidden" id="par-detail-card">
         <button class="back-btn" onclick="closeParDetail()">← Back</button>
         <div id="par-detail"></div>
+        <div id="par-detail-perf" style="margin-top:0;"></div>
       </div>
     </div>
   </div>
@@ -370,6 +377,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
         <div id="fees-detail"></div>
       </div>
     </div>
+  </div>
+
   </div>
 
   <div class="panel" id="panel-perf">
@@ -399,7 +408,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       </div>
     </div>
   </div>
-</div>
+
+  <!-- PARENT PERFORMANCE PANEL (shown to parents as second card) -->
 
 <!-- FEES MODAL -->
 <div id="fees-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9998;align-items:center;justify-content:center;">
@@ -424,9 +434,9 @@ import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstat
 
 const firebaseConfig = {
   apiKey: "AIzaSyDcuxhDF69_lNgQc8B2WiqRDbOkocFEOIU",
-  authDomain: "everready-tuition-f1c65.firebaseapp.com",
-  projectId: "everready-tuition-f1c65",
-  storageBucket: "everready-tuition-f1c65.firebasestorage.app",
+  authDomain: "everready-tuition.firebaseapp.com",
+  projectId: "everready-tuition",
+  storageBucket: "everready-tuition.firebasestorage.app",
   messagingSenderId: "553585203346",
   appId: "1:553585203346:web:984e7dac34baad871e6e4b"
 };
@@ -436,7 +446,7 @@ const db    = getFirestore(fbApp);
 
 // ── STATE ──────────────────────────────────────────────────────────────────
 const S = {
-  classes:[], students:[], attendance:{}, fees:{},
+  classes:[], students:[], attendance:{}, fees:{}, tests:[],
   activeClass:null, role:'', nextStuId:1, nextClsId:1,
   selected:new Set(), feeModalStuId:null, parentStudentIds:[]
 };
@@ -462,18 +472,8 @@ function setSyncStatus(s){
 // ── FIRESTORE SAVE ─────────────────────────────────────────────────────────
 async function fbSet(id, data){
   setSyncStatus('ing');
-  try{
-    await setDoc(doc(db,'eduattend',id), data);
-    setSyncStatus('ok');
-    return true;
-  } catch(e){
-    setSyncStatus('err');
-    console.error('Firebase write error ['+id+']:', e.code, e.message);
-    showToast('❌ Save failed: ' + (e.code==='permission-denied'
-      ? 'Check Firestore Rules in Firebase Console'
-      : e.message), 'err');
-    return false;
-  }
+  try{ await setDoc(doc(db,'eduattend',id), data); setSyncStatus('ok'); }
+  catch(e){ setSyncStatus('err'); console.error(e); }
 }
 const saveMeta = () => fbSet('meta',{classes:S.classes,students:S.students,nextStuId:S.nextStuId,nextClsId:S.nextClsId,activeClass:S.activeClass});
 const saveAtt  = () => fbSet('attendance',{data:S.attendance});
@@ -501,6 +501,13 @@ function startListeners(){
     if(!snap.exists())return;
     S.fees=snap.data().data||{};
     if(S.role==='Admin'){renderFeesList();renderFeesSummary();}
+  }, ()=>setSyncStatus('err'));
+
+  onSnapshot(doc(db,'eduattend','tests'), snap=>{
+    if(!snap.exists())return;
+    S.tests=snap.data().data||[];
+    if(S.role==='Admin'){ renderTestsList(); renderPerfMarksInput(); }
+    if(S.role==='Parent'){ renderParPerfList(); }
   }, ()=>setSyncStatus('err'));
 }
 
@@ -556,8 +563,12 @@ function loginAs(role){
 window.logout=()=>{ $('app').classList.add('hidden'); $('login-screen').classList.remove('hidden'); S.selected.clear(); S.parentStudentIds=[]; };
 
 // ── TABS ───────────────────────────────────────────────────────────────────
-// switchTab is defined later (unified version handles perf tab too)
-
+window.switchTab=(btn,pid)=>{
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); btn.classList.add('active');
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active')); $('panel-'+pid).classList.add('active');
+  if(pid==='perf'){ renderCtabs('ctabs-perf'); renderPerfMarksInput(); renderTestsList(); }
+  else renderAll();
+};
 
 function renderCtabs(cid){
   const el=$(cid);if(!el)return;
@@ -575,6 +586,7 @@ function renderAll(){
     renderCtabs('ctabs-fees'); renderFeesList();
   }
   renderParList();
+  if(S.role==='Parent') renderParPerfList();
 }
 
 // ── ATTENDANCE ─────────────────────────────────────────────────────────────
@@ -618,11 +630,27 @@ window.bulkMark  =st=>{
 window.notifyAbsent=()=>{
   const d=getDate(), absent=S.students.filter(s=>s.classId===S.activeClass&&getStatus(s.id,d,S.activeClass)==='absent');
   if(!absent.length){$('wa-links').innerHTML='<div class="msg ok" style="margin-top:10px">✓ No absent students today!</div>';return;}
-  $('wa-links').innerHTML=absent.map(s=>{
+  const links=absent.map(s=>{
     const msg=encodeURIComponent(`Dear ${s.father}, your ward ${s.name} was marked ABSENT on ${d}. — EverReady Tuition`);
     const phone=s.phone.replace(/\D/g,'');
-    return `<div class="wa-card"><div class="wname">${s.name} — ${s.phone}</div><a href="https://wa.me/${phone}?text=${msg}" target="_blank">📲 Open WhatsApp for ${s.father} →</a></div>`;
-  }).join('');
+    return {name:s.name,phone:s.phone,father:s.father,url:`https://wa.me/${phone}?text=${msg}`};
+  });
+  $('wa-links').innerHTML=`
+    <div style="margin:12px 0 8px;">
+      <button onclick="sendAllWhatsApp()" style="width:100%;padding:13px;background:#25D366;color:white;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+        📲 Send All ${links.length} WhatsApp Message${links.length>1?'s':''} at Once
+      </button>
+      <div style="font-size:11px;color:#6b7280;margin-top:5px;text-align:center;">Tap the button — all chats will open one by one automatically.</div>
+    </div>
+    <div style="font-size:12px;font-weight:600;color:#374151;margin:10px 0 6px;">Or send individually:</div>
+    ${links.map(l=>`<div class="wa-card"><div class="wname">${l.name} — ${l.phone}</div><a href="${l.url}" target="_blank">📲 Open WhatsApp for ${l.father} →</a></div>`).join('')}
+  `;
+  window._waLinks=links.map(l=>l.url);
+};
+window.sendAllWhatsApp=()=>{
+  const links=window._waLinks||[];
+  if(!links.length)return;
+  links.forEach((url,i)=>{ setTimeout(()=>window.open(url,'_blank'), i*800); });
 };
 
 // ── STUDENTS ───────────────────────────────────────────────────────────────
@@ -742,8 +770,8 @@ function renderParList(){
     </div>`).join(''):'<div class="empty-msg">No students found.</div>';
 }
 
-window.showParDetail=id=>{ _parDetailId=id; $('par-list-card').classList.add('hidden'); $('par-detail-card').classList.remove('hidden'); renderParDetail(); };
-window._renderParDetailBase=()=>{
+window.showParDetail=id=>{ _parDetailId=id; $('par-list-card').classList.add('hidden'); $('par-detail-card').classList.remove('hidden'); renderParDetail(); setTimeout(()=>renderParDetailPerf(id),50); };
+window.renderParDetail=()=>{
   const id=_parDetailId, s=S.students.find(x=>x.id===id); if(!s)return;
   const df=($('par-date-filter')||{value:''}).value;
   let rows='',total=0,present=0;
@@ -862,33 +890,10 @@ window.deletePayment=async(stuId,idx)=>{
 window.showMsg=function(id,txt,type){$(id).innerHTML=`<div class="msg ${type}">${txt}</div>`;setTimeout(()=>{$(id).innerHTML='';},3000);};
 function showMsg(id,txt,type){$(id).innerHTML=`<div class="msg ${type}">${txt}</div>`;setTimeout(()=>{$(id).innerHTML='';},3000);}
 
-function showToast(msg, type){
-  let t=document.getElementById('toast');
-  if(!t){ t=document.createElement('div'); t.id='toast';
-    t.style.cssText='position:fixed;bottom:24px;left:50%;transform:translateX(-50%);padding:11px 20px;border-radius:12px;font-size:13px;font-weight:600;z-index:99999;max-width:88vw;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,0.2);transition:opacity 0.3s;';
-    document.body.appendChild(t);
-  }
-  t.textContent=msg;
-  t.style.background = type==='err'?'#991b1b':'#0F6E56';
-  t.style.color='white'; t.style.opacity='1';
-  clearTimeout(t._timer);
-  t._timer=setTimeout(()=>{ t.style.opacity='0'; },4000);
-}
-
 // ── ACADEMIC PERFORMANCE ───────────────────────────────────────────────────
 // tests: [{id, name, subject, date, maxMarks, classId, scores:{stuId:marks}}]
 
 const saveTests = () => fbSet('tests', { data: S.tests });
-
-// Patch startListeners to also listen to tests
-onSnapshot(doc(db,'eduattend','tests'), snap => {
-  if(!snap.exists()) return;
-  S.tests = snap.data().data || [];
-  if(S.role==='Admin'){ renderTestsList(); renderPerfMarksInput(); }
-});
-
-// Patch S to include tests
-S.tests = [];
 
 // Also fetch tests on load
 (async()=>{
@@ -926,7 +931,7 @@ window.saveTest = async () => {
     if(!isNaN(v) && v>=0) scores[s.id] = Math.min(v, maxM);
   });
 
-  if(!Object.keys(scores).length){ showMsg('perf-msg',"Enter at least one student's marks.",'err'); return; }
+  if(!Object.keys(scores).length){ showMsg('perf-msg','Enter at least one student\u2019s marks.','err'); return; }
 
   const test = {
     id: Date.now(),
@@ -1075,17 +1080,13 @@ function renderParentPerf(stuId){
     </div>`;
   }).join('');
 
-  // overall pie
-  const passC  = tests.filter(t=>{const p=t.scores[s.id]/t.maxMarks*100;return p>=75;}).length;
-  const avgC   = tests.filter(t=>{const p=t.scores[s.id]/t.maxMarks*100;return p>=50&&p<75;}).length;
-  const belowC = tests.filter(t=>{const p=t.scores[s.id]/t.maxMarks*100;return p<50;}).length;
   const overallAvg = tests.length ? Math.round(tests.reduce((a,t)=>a+Math.round(t.scores[s.id]/t.maxMarks*100),0)/tests.length) : 0;
-
   const grade = overallAvg>=90?'A+':overallAvg>=75?'A':overallAvg>=60?'B':overallAvg>=50?'C':'D';
   const gradeColor = overallAvg>=75?'#E1F5EE':overallAvg>=50?'#FAEEDA':'#FCEBEB';
   const gradeText  = overallAvg>=75?'#0F6E56':overallAvg>=50?'#b45309':'#991b1b';
 
-  setTimeout(()=>drawPie('pie-parent-'+stuId,[passC,avgC,belowC],['#1D9E75','#f59e0b','#E24B4A']),50);
+  const barCanvasId = 'bar-parent-'+stuId;
+  setTimeout(()=>drawBarChart(barCanvasId, tests, s.id), 50);
 
   return `
     <div style="font-weight:700;font-size:16px;margin-bottom:12px;">🎓 Academic Performance</div>
@@ -1093,103 +1094,118 @@ function renderParentPerf(stuId){
       <div style="background:${gradeColor};color:${gradeText};font-size:36px;font-weight:800;border-radius:14px;padding:10px 24px;display:inline-block;">${grade}</div>
       <div style="font-size:12px;color:#6b7280;margin-top:6px;">Overall Average: ${overallAvg}% across ${tests.length} test${tests.length!==1?'s':''}</div>
     </div>
-    <div class="pie-wrap"><canvas id="pie-parent-${stuId}" width="180" height="180"></canvas></div>
-    <div class="pie-legend">
-      <div class="pie-legend-item"><div class="pie-legend-dot" style="background:#1D9E75"></div>Excellent ≥75% (${passC})</div>
-      <div class="pie-legend-item"><div class="pie-legend-dot" style="background:#f59e0b"></div>Average (${avgC})</div>
-      <div class="pie-legend-item"><div class="pie-legend-dot" style="background:#E24B4A"></div>Needs Work (${belowC})</div>
+    <div style="margin:14px 0 6px;font-weight:600;font-size:13px;color:#374151;">📊 Test Score Overview</div>
+    <div style="overflow-x:auto;">
+      <canvas id="${barCanvasId}" height="220" style="display:block;width:100%;max-width:100%;"></canvas>
+    </div>
+    <div style="display:flex;gap:16px;justify-content:center;margin:8px 0 14px;font-size:11px;color:#6b7280;">
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#1D9E75;margin-right:4px;vertical-align:middle;"></span>Scored Marks</span>
+      <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#e5e7eb;margin-right:4px;vertical-align:middle;"></span>Total Marks</span>
     </div>
     <div style="font-weight:600;font-size:13px;margin:12px 0 8px;">Test-wise Results</div>
     ${rows}`;
 }
 
-// ── PIE CHART RENDERER ────────────────────────────────────────────────────
-function drawPie(canvasId, data, colors){
+// ── PARENT PERFORMANCE LIST (shown on parent home) ────────────────────────
+function renderParPerfList(){
+  const el=$('par-perf-list'); if(!el)return;
+  const stus=S.students.filter(s=>S.parentStudentIds.includes(s.id));
+  if(!stus.length){ el.innerHTML='<div class="empty-msg">No students linked.</div>'; return; }
+  el.innerHTML=stus.map(s=>{
+    const tests=S.tests.filter(t=>t.classId===s.classId&&t.scores[s.id]!==undefined);
+    if(!tests.length) return `<div class="par-item"><div class="avatar" style="background:${aColor(s.id)};width:38px;height:38px;font-size:13px">${initials(s.name)}</div><div style="flex:1"><div class="par-name">${s.name}</div><div class="par-sub">No tests recorded yet</div></div></div>`;
+    const overall=Math.round(tests.reduce((a,t)=>a+Math.round(t.scores[s.id]/t.maxMarks*100),0)/tests.length);
+    const grade=overall>=90?'A+':overall>=75?'A':overall>=60?'B':overall>=50?'C':'D';
+    const col=overall>=75?'#0F6E56':overall>=50?'#b45309':'#991b1b';
+    return `<div class="par-item" onclick="showParDetail(${s.id})">
+      <div class="avatar" style="background:${aColor(s.id)};width:38px;height:38px;font-size:13px">${initials(s.name)}</div>
+      <div style="flex:1"><div class="par-name">${s.name}</div><div class="par-sub">${tests.length} test${tests.length!==1?'s':''} · Avg ${overall}%</div></div>
+      <div style="font-size:22px;font-weight:800;color:${col};margin-right:8px;">${grade}</div>
+      <span class="par-arr">›</span>
+    </div>`;
+  }).join('');
+}
+
+// ── PARENT DETAIL PERF (shown in student detail view) ────────────────────
+function renderParDetailPerf(stuId){
+  const el=$('par-detail-perf'); if(!el)return;
+  el.innerHTML='<hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;">'+renderParentPerf(stuId);
+}
+
+// ── BAR CHART RENDERER ────────────────────────────────────────────────────
+// roundRect polyfill for older browsers
+if(!CanvasRenderingContext2D.prototype.roundRect){
+  CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){
+    const rad=Array.isArray(r)?r[0]:r;
+    this.moveTo(x+rad,y); this.lineTo(x+w-rad,y);
+    this.quadraticCurveTo(x+w,y,x+w,y+rad);
+    this.lineTo(x+w,y+h); this.lineTo(x,y+h); this.lineTo(x,y+rad);
+    this.quadraticCurveTo(x,y,x+rad,y); this.closePath();
+  };
+}
+function drawBarChart(canvasId, tests, stuId){
   const canvas = document.getElementById(canvasId); if(!canvas) return;
+
+  const BAR_W = 44, GAP = 20, PAD_L = 40, PAD_R = 16, PAD_T = 24, PAD_B = 60;
+  const totalWidth = Math.max(PAD_L + PAD_R + tests.length*(BAR_W+GAP), canvas.parentElement.clientWidth || 300);
+  canvas.width  = totalWidth;
+  canvas.height = 220;
+
   const ctx = canvas.getContext('2d');
-  const total = data.reduce((a,b)=>a+b,0);
-  if(!total){ ctx.clearRect(0,0,canvas.width,canvas.height); return; }
-  const cx=canvas.width/2, cy=canvas.height/2, r=Math.min(cx,cy)-10;
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  let start=0;
-  data.forEach((val,i)=>{
-    if(!val)return;
-    const slice=(val/total)*Math.PI*2;
-    ctx.beginPath(); ctx.moveTo(cx,cy);
-    ctx.arc(cx,cy,r,start,start+slice);
-    ctx.closePath(); ctx.fillStyle=colors[i]; ctx.fill();
-    // white separator
-    ctx.strokeStyle='white'; ctx.lineWidth=2; ctx.stroke();
-    // label
-    if(val/total>0.07){
-      const mid=start+slice/2;
-      const lx=cx+Math.cos(mid)*r*0.65, ly=cy+Math.sin(mid)*r*0.65;
-      ctx.fillStyle='white'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText(Math.round(val/total*100)+'%',lx,ly);
-    }
-    start+=slice;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const chartH = canvas.height - PAD_T - PAD_B;
+  const maxMark = Math.max(...tests.map(t=>t.maxMarks));
+
+  // Gridlines + Y-axis labels
+  const steps = 5;
+  ctx.strokeStyle = '#e5e7eb'; ctx.lineWidth = 1;
+  ctx.fillStyle = '#9ca3af'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+  for(let i=0;i<=steps;i++){
+    const val = Math.round(maxMark/steps*i);
+    const y   = PAD_T + chartH - (val/maxMark)*chartH;
+    ctx.beginPath(); ctx.moveTo(PAD_L, y); ctx.lineTo(canvas.width-PAD_R, y); ctx.stroke();
+    ctx.fillText(val, PAD_L-4, y+4);
+  }
+
+  // Bars
+  tests.forEach((t, i)=>{
+    const sc   = t.scores[stuId];
+    const pct  = sc / t.maxMarks;
+    const x    = PAD_L + i*(BAR_W+GAP);
+
+    // Background bar (total marks)
+    const bgH  = chartH;
+    ctx.fillStyle = '#e5e7eb';
+    ctx.beginPath();
+    ctx.roundRect(x, PAD_T, BAR_W, bgH, [4,4,0,0]);
+    ctx.fill();
+
+    // Scored bar
+    const barH = Math.max(pct*chartH, 4);
+    const col  = pct>=0.75?'#1D9E75':pct>=0.5?'#f59e0b':'#E24B4A';
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    ctx.roundRect(x, PAD_T+chartH-barH, BAR_W, barH, [4,4,0,0]);
+    ctx.fill();
+
+    // Score label on top of bar
+    ctx.fillStyle = col; ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(sc+'/'+t.maxMarks, x+BAR_W/2, PAD_T+chartH-barH-5);
+
+    // X-axis test name (wrap if needed)
+    ctx.fillStyle = '#374151'; ctx.font = '10px sans-serif';
+    const label = t.name.length>10 ? t.name.slice(0,10)+'…' : t.name;
+    ctx.fillText(label, x+BAR_W/2, PAD_T+chartH+16);
+
+    // Date below
+    ctx.fillStyle = '#9ca3af'; ctx.font = '9px sans-serif';
+    ctx.fillText(t.date||'', x+BAR_W/2, PAD_T+chartH+30);
   });
 }
 
-// Unified renderParDetail — includes perf section
-window.renderParDetail = () => {
-  const id = _parDetailId;
-  if(!id) return;
-  const s = S.students.find(x=>x.id===id); if(!s) return;
-  const df=($('par-date-filter')||{value:''}).value;
-  let rows='',total=0,present=0;
-  Object.keys(S.attendance).sort().reverse().forEach(k=>{
-    if(k.endsWith('_'+s.classId)){
-      const d=k.split('_')[0],st=(S.attendance[k]||{})[s.id];
-      if(st&&st!=='unmarked'){
-        total++;if(st==='present')present++;
-        if(!df||d===df) rows+=`<div class="hist-row"><span>${d}</span><span class="status-pill pill-${st}">${st.charAt(0).toUpperCase()+st.slice(1)}</span></div>`;
-      }
-    }
-  });
-  const pct=total?Math.round(present/total*100):0;
-  const drHtml=df?(()=>{
-    const k=df+'_'+s.classId,st=(S.attendance[k]||{})[s.id]||'unmarked';
-    if(st==='unmarked')return `<div class="msg" style="background:#f1f5f9;color:#374151;margin-bottom:10px;">No record found for ${df}</div>`;
-    return `<div class="msg ${st==='present'?'ok':'err'}" style="margin-bottom:10px;">${st==='present'?'✅':'❌'} <strong>${s.name}</strong> was <strong>${st.toUpperCase()}</strong> on ${df}</div>`;
-  })():'';
-  const perfHtml = renderParentPerf(id);
-  $('par-detail').innerHTML=`
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
-      <div class="avatar" style="background:${aColor(s.id)};width:50px;height:50px;font-size:16px">${initials(s.name)}</div>
-      <div><div style="font-size:17px;font-weight:700">${s.name}</div><div style="font-size:12px;color:#6b7280">${s.school} · Father: ${s.father}</div></div>
-    </div>
-    <div class="stats-grid" style="margin-bottom:14px">
-      <div class="stat-box g"><div class="stat-n">${present}</div><div class="stat-l">Present</div></div>
-      <div class="stat-box r"><div class="stat-n">${total-present}</div><div class="stat-l">Absent</div></div>
-      <div class="stat-box b"><div class="stat-n">${total}</div><div class="stat-l">Total</div></div>
-      <div class="stat-box a"><div class="stat-n">${pct}%</div><div class="stat-l">Rate</div></div>
-    </div>
-    <div style="font-weight:600;font-size:13px;margin-bottom:8px">🔍 Check a Specific Date</div>
-    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
-      <input type="date" id="par-date-filter" class="date-pick" style="flex:1;" value="${df}" oninput="renderParDetail()">
-      <button class="bbtn" onclick="document.getElementById('par-date-filter').value='';renderParDetail()">Clear</button>
-    </div>
-    ${drHtml}
-    <div style="font-weight:600;font-size:13px;margin-bottom:8px">${df?'Filtered History':'Full Attendance History'}</div>
-    ${rows||'<div class="empty-msg">No records yet.</div>'}
-    <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;">
-    ${perfHtml}
-  `;
-};
-
-// Unified switchTab — handles all panels including perf
-window.switchTab = (btn, pid) => {
-  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active')); btn.classList.add('active');
-  document.querySelectorAll('.panel').forEach(p=>{ p.classList.remove('active'); });
-  const panel = $('panel-'+pid);
-  if(panel){ panel.classList.add('active'); }
-  if(pid==='perf'){ renderCtabs('ctabs-perf'); renderPerfMarksInput(); renderTestsList(); }
-  else renderAll();
-};
 window.renderTestsList = renderTestsList;
 window.renderPerfMarksInput = renderPerfMarksInput;
-window.showPerfDetail = window.showPerfDetail;
 </script>
 </body>
 </html>
