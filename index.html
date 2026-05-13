@@ -630,27 +630,11 @@ window.bulkMark  =st=>{
 window.notifyAbsent=()=>{
   const d=getDate(), absent=S.students.filter(s=>s.classId===S.activeClass&&getStatus(s.id,d,S.activeClass)==='absent');
   if(!absent.length){$('wa-links').innerHTML='<div class="msg ok" style="margin-top:10px">✓ No absent students today!</div>';return;}
-  const links=absent.map(s=>{
+  $('wa-links').innerHTML=absent.map(s=>{
     const msg=encodeURIComponent(`Dear ${s.father}, your ward ${s.name} was marked ABSENT on ${d}. — EverReady Tuition`);
     const phone=s.phone.replace(/\D/g,'');
-    return {name:s.name,phone:s.phone,father:s.father,url:`https://wa.me/${phone}?text=${msg}`};
-  });
-  $('wa-links').innerHTML=`
-    <div style="margin:12px 0 8px;">
-      <button onclick="sendAllWhatsApp()" style="width:100%;padding:13px;background:#25D366;color:white;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
-        📲 Send All ${links.length} WhatsApp Message${links.length>1?'s':''} at Once
-      </button>
-      <div style="font-size:11px;color:#6b7280;margin-top:5px;text-align:center;">Tap the button — all chats will open one by one automatically.</div>
-    </div>
-    <div style="font-size:12px;font-weight:600;color:#374151;margin:10px 0 6px;">Or send individually:</div>
-    ${links.map(l=>`<div class="wa-card"><div class="wname">${l.name} — ${l.phone}</div><a href="${l.url}" target="_blank">📲 Open WhatsApp for ${l.father} →</a></div>`).join('')}
-  `;
-  window._waLinks=links.map(l=>l.url);
-};
-window.sendAllWhatsApp=()=>{
-  const links=window._waLinks||[];
-  if(!links.length)return;
-  links.forEach((url,i)=>{ setTimeout(()=>window.open(url,'_blank'), i*800); });
+    return `<div class="wa-card"><div class="wname">${s.name} — ${s.phone}</div><a href="https://wa.me/${phone}?text=${msg}" target="_blank">📲 Open WhatsApp for ${s.father} →</a></div>`;
+  }).join('');
 };
 
 // ── STUDENTS ───────────────────────────────────────────────────────────────
