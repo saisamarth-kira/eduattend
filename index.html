@@ -433,12 +433,12 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebas
 import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyDcuxhDF69_lNgQc8B2WiqRDbOkocFEOIU",
-  authDomain: "everready-tuition.firebaseapp.com",
-  projectId: "everready-tuition",
-  storageBucket: "everready-tuition.firebasestorage.app",
-  messagingSenderId: "553585203346",
-  appId: "1:553585203346:web:984e7dac34baad871e6e4b"
+  apiKey: "AIzaSyASPO8g03vnnQhn03ESotKCTptkDfhTIiM",
+  authDomain: "eduattend-live.firebaseapp.com",
+  projectId: "eduattend-live",
+  storageBucket: "eduattend-live.firebasestorage.app",
+  messagingSenderId: "815396207214",
+  appId: "1:815396207214:web:9ed04011264d30689ec47f"
 };
 
 const fbApp = initializeApp(firebaseConfig);
@@ -630,11 +630,27 @@ window.bulkMark  =st=>{
 window.notifyAbsent=()=>{
   const d=getDate(), absent=S.students.filter(s=>s.classId===S.activeClass&&getStatus(s.id,d,S.activeClass)==='absent');
   if(!absent.length){$('wa-links').innerHTML='<div class="msg ok" style="margin-top:10px">✓ No absent students today!</div>';return;}
-  $('wa-links').innerHTML=absent.map(s=>{
+  const links=absent.map(s=>{
     const msg=encodeURIComponent(`Dear ${s.father}, your ward ${s.name} was marked ABSENT on ${d}. — EverReady Tuition`);
     const phone=s.phone.replace(/\D/g,'');
-    return `<div class="wa-card"><div class="wname">${s.name} — ${s.phone}</div><a href="https://wa.me/${phone}?text=${msg}" target="_blank">📲 Open WhatsApp for ${s.father} →</a></div>`;
-  }).join('');
+    return {name:s.name,phone:s.phone,father:s.father,url:`https://wa.me/${phone}?text=${msg}`};
+  });
+  window._waLinks=links.map(l=>l.url);
+  $('wa-links').innerHTML=`
+    <div style="margin:12px 0 8px;">
+      <button onclick="sendAllWhatsApp()" style="width:100%;padding:13px;background:#25D366;color:white;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
+        📲 Send All ${links.length} WhatsApp Message${links.length>1?'s':''} at Once
+      </button>
+      <div style="font-size:11px;color:#6b7280;margin-top:5px;text-align:center;">All chats will open one by one. Allow pop-ups if prompted.</div>
+    </div>
+    <div style="font-size:12px;font-weight:600;color:#374151;margin:10px 0 6px;">Or send individually:</div>
+    ${links.map(l=>`<div class="wa-card"><div class="wname">${l.name} — ${l.phone}</div><a href="${l.url}" target="_blank">📲 Open WhatsApp for ${l.father} →</a></div>`).join('')}
+  `;
+};
+window.sendAllWhatsApp=()=>{
+  const links=window._waLinks||[];
+  if(!links.length)return;
+  links.forEach((url,i)=>setTimeout(()=>window.open(url,'_blank'),i*900));
 };
 
 // ── STUDENTS ───────────────────────────────────────────────────────────────
@@ -827,10 +843,10 @@ window.showFeeDetail=id=>{
   const s=S.students.find(x=>x.id===id);if(!s)return;
   $('fees-list-card').classList.add('hidden');$('fees-detail-card').classList.remove('hidden');
   const fd=getFeeData(id),paid=feePaid(id),due=fd.total||0,bal=due-paid;
-  const rows=fd.payments.length?[...fd.payments].reverse().map((p,i)=>`
+  const rows=fd.payments.length?[...fd.payments].map((p,i)=>({p,origIdx:i})).reverse().map(({p,origIdx})=>`
     <div class="fees-detail-row">
       <div><div style="font-weight:600;font-size:13px">₹${(p.amount||0).toLocaleString('en-IN')}</div><div style="font-size:11px;color:#6b7280">${p.date}${p.note?' · '+p.note:''}</div></div>
-      <button class="del-btn" onclick="deletePayment(${id},${fd.payments.length-1-i})">Remove</button>
+      <button class="del-btn" onclick="deletePayment(${id},${origIdx})">Remove</button>
     </div>`).join(''):'<div class="empty-msg" style="padding:14px 0">No payments yet.</div>';
   $('fees-detail').innerHTML=`
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
@@ -871,8 +887,8 @@ window.deletePayment=async(stuId,idx)=>{
 };
 
 // ── UTILS ──────────────────────────────────────────────────────────────────
-window.showMsg=function(id,txt,type){$(id).innerHTML=`<div class="msg ${type}">${txt}</div>`;setTimeout(()=>{$(id).innerHTML='';},3000);};
 function showMsg(id,txt,type){$(id).innerHTML=`<div class="msg ${type}">${txt}</div>`;setTimeout(()=>{$(id).innerHTML='';},3000);}
+window.showMsg=showMsg;
 
 // ── ACADEMIC PERFORMANCE ───────────────────────────────────────────────────
 // tests: [{id, name, subject, date, maxMarks, classId, scores:{stuId:marks}}]
