@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>EduAttend</title>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f6f9; color: #1a1a1a; font-size: 15px; }
@@ -293,6 +294,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
         </div>
         <button class="btn-primary" onclick="addStudent()">Add Student</button>
         <div id="stu-msg"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">📥 Import Students from Excel / CSV</div>
+        <div style="font-size:12px;color:#6b7280;margin-bottom:10px;line-height:1.5;">
+          Imports into the class selected below: <strong id="import-class-name">—</strong>. Switch class first using the tabs under "All Students", then upload. Required columns: <strong>Name</strong>, <strong>Phone</strong>. Optional: Father's Name, School, Roll No.
+        </div>
+        <input type="file" id="import-file" accept=".xlsx,.xls,.csv" style="display:block;margin-bottom:10px;font-size:13px;">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn-primary" style="flex:1;min-width:160px;" onclick="importStudentsFile()">Import Sheet</button>
+          <button class="bbtn" onclick="downloadTemplate()">⬇ Sample Template</button>
+        </div>
+        <div id="import-msg"></div>
       </div>
       <div class="card">
         <div class="card-title">All Students</div>
@@ -627,30 +640,37 @@ window.bulkMark  =st=>{
   S.selected.forEach(id=>S.attendance[k][id]=st);
   S.selected.clear(); saveAtt(); renderAtt();
 };
+// Browsers only reliably allow ONE window.open() per real click — that's why
+// auto-looping through absentees used to stall after a few. Instead, each
+// absent student gets their own button (a genuine click every time, so it
+// always opens), and we track which ones have been tapped so nothing gets
+// missed even with a long list.
 window.notifyAbsent=()=>{
   const d=getDate(), absent=S.students.filter(s=>s.classId===S.activeClass&&getStatus(s.id,d,S.activeClass)==='absent');
   if(!absent.length){$('wa-links').innerHTML='<div class="msg ok" style="margin-top:10px">✓ No absent students today!</div>';return;}
-  const links=absent.map(s=>{
+  S._waSent=new Set();
+  S._waQueue=absent.map(s=>{
     const msg=encodeURIComponent(`Dear ${s.father}, your ward ${s.name} was marked ABSENT on ${d}. — EverReady Tuition`);
-    const phone=s.phone.replace(/\D/g,'');
-    return {name:s.name,phone:s.phone,father:s.father,url:`https://wa.me/${phone}?text=${msg}`};
+    const phone=normalizePhone(s.phone);
+    return {id:s.id,name:s.name,phone:s.phone,father:s.father,url:`https://wa.me/${phone}?text=${msg}`};
   });
-  window._waLinks=links.map(l=>l.url);
-  $('wa-links').innerHTML=`
-    <div style="margin:12px 0 8px;">
-      <button onclick="sendAllWhatsApp()" style="width:100%;padding:13px;background:#25D366;color:white;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;">
-        📲 Send All ${links.length} WhatsApp Message${links.length>1?'s':''} at Once
-      </button>
-      <div style="font-size:11px;color:#6b7280;margin-top:5px;text-align:center;">All chats will open one by one. Allow pop-ups if prompted.</div>
-    </div>
-    <div style="font-size:12px;font-weight:600;color:#374151;margin:10px 0 6px;">Or send individually:</div>
-    ${links.map(l=>`<div class="wa-card"><div class="wname">${l.name} — ${l.phone}</div><a href="${l.url}" target="_blank">📲 Open WhatsApp for ${l.father} →</a></div>`).join('')}
-  `;
+  renderWaQueue();
 };
-window.sendAllWhatsApp=()=>{
-  const links=window._waLinks||[];
-  if(!links.length)return;
-  links.forEach((url,i)=>setTimeout(()=>window.open(url,'_blank'),i*900));
+function renderWaQueue(){
+  const q=S._waQueue||[], sent=S._waSent||new Set();
+  $('wa-links').innerHTML=`
+    <div class="msg ok" style="margin:10px 0;">📲 ${sent.size} of ${q.length} sent — tap each button below. Each one opens its own WhatsApp chat, so none get blocked no matter how many there are.</div>
+    ${q.map(l=>`
+      <div class="wa-card" style="${sent.has(l.id)?'opacity:0.55;':''}">
+        <div class="wname">${sent.has(l.id)?'✓ ':''}${l.name} — ${l.phone}</div>
+        <a href="${l.url}" target="_blank" onclick="markWaSent(${l.id})">📲 ${sent.has(l.id)?'Sent — tap to resend':'Open WhatsApp for '+l.father} →</a>
+      </div>`).join('')}
+  `;
+}
+window.markWaSent=(id)=>{
+  S._waSent=S._waSent||new Set();
+  S._waSent.add(id);
+  setTimeout(renderWaQueue,250);
 };
 
 // ── STUDENTS ───────────────────────────────────────────────────────────────
@@ -671,6 +691,8 @@ window.removeStudent=async id=>{
 };
 function renderStuList(){
   renderCtabs('ctabs-stu');
+  const lbl=$('import-class-name');
+  if(lbl){ const c=S.classes.find(x=>x.id===S.activeClass); lbl.textContent=c?c.name:'— select a class tab below —'; }
   const stus=S.students.filter(s=>s.classId===S.activeClass);
   $('stu-list').innerHTML=stus.length?stus.map(s=>`
     <div class="sli">
@@ -679,6 +701,72 @@ function renderStuList(){
       <button class="del-btn" onclick="removeStudent(${s.id})">Remove</button>
     </div>`).join(''):'<div class="empty-msg">No students yet.</div>';
 }
+
+// ── PHONE NORMALIZATION (adds 91 country code to bare 10-digit numbers) ────
+function normalizePhone(raw){
+  let d=String(raw||'').replace(/\D/g,'');
+  if(d.length===11 && d.startsWith('0')) d=d.slice(1);
+  if(d.length===10) d='91'+d;
+  return d;
+}
+
+// ── EXCEL / CSV IMPORT ───────────────────────────────────────────────────
+window.importStudentsFile=async()=>{
+  const fileInput=$('import-file'), file=fileInput.files[0];
+  if(!S.activeClass){ showMsg('import-msg','Select a class tab (under "All Students") first.','err'); return; }
+  if(!file){ showMsg('import-msg','Choose an Excel or CSV file first.','err'); return; }
+  if(typeof XLSX==='undefined'){ showMsg('import-msg','Could not load the file-reading library. Check your internet connection and try again.','err'); return; }
+  showMsg('import-msg','Reading file…','ok');
+  try{
+    const data=await file.arrayBuffer();
+    const wb=XLSX.read(data,{type:'array'});
+    const sheet=wb.Sheets[wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(sheet,{defval:''});
+    const pick=(row,keys)=>{
+      for(const k of keys){
+        const found=Object.keys(row).find(x=>x.trim().toLowerCase()===k);
+        if(found && String(row[found]).trim()) return String(row[found]).trim();
+      }
+      return '';
+    };
+    let added=0, skipped=0;
+    rows.forEach(row=>{
+      const name=pick(row,['name','student name','full name']);
+      const phoneRaw=pick(row,['phone','parent phone','phone number','mobile','mobile number']);
+      const phone=normalizePhone(phoneRaw);
+      if(!name || phone.length<11){ skipped++; return; }
+      S.students.push({
+        id:S.nextStuId++,
+        name,
+        father:pick(row,['father','father\'s name','fathers name','father name']),
+        school:pick(row,['school','school name']),
+        classId:S.activeClass,
+        phone,
+        roll:pick(row,['roll','roll no','roll no.','rollnumber','roll number'])
+      });
+      added++;
+    });
+    fileInput.value='';
+    if(added>0){
+      showMsg('import-msg',`✓ Imported ${added} student${added===1?'':'s'}.${skipped?` Skipped ${skipped} row(s) missing a Name or valid Phone number.`:''}`,'ok');
+      await saveMeta(); renderAll();
+    } else {
+      showMsg('import-msg',`No students imported. ${skipped} row(s) were missing a Name or valid Phone number — check the column headers match the sample template.`,'err');
+    }
+  }catch(e){
+    console.error(e);
+    showMsg('import-msg','Could not read that file. Make sure it\'s a valid .xlsx, .xls or .csv file.','err');
+  }
+};
+
+window.downloadTemplate=()=>{
+  const csv="Name,Father's Name,School,Phone,Roll No\nRohan Sharma,Vikas Sharma,DPS School,9999999999,12\nAnjali Rao,Suresh Rao,Vidya School,8888888888,13\n";
+  const blob=new Blob([csv],{type:'text/csv'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a');
+  a.href=url; a.download='eduattend_student_template.csv'; a.click();
+  URL.revokeObjectURL(url);
+};
 
 // ── CLASSES ────────────────────────────────────────────────────────────────
 window.addClass=async()=>{
